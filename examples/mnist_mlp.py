@@ -73,7 +73,7 @@ def train(model_save_path):
 
 
 def test(model_save_path):
-    images, labels = MNIST.readTest()
+    images, labels = MNIST.loadTest()
     images = MNIST.normalize(images)
     labels = MNIST.toOneHot(labels)
     images = images.reshape(-1, 784)

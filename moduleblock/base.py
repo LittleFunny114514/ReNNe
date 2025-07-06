@@ -85,15 +85,15 @@ class Module:
             np.savez_compressed(path, **self.save(path, ""))
             return
         key += self.__class__.__name__
-        ret = ({f"{key}[{i}]": self.params[i].value for i in range(len(self.params))},)
+        ret: dict = {
+            f"{key}[{i}]": self.params[i].value for i in range(len(self.params))
+        }
 
         for i, sublayer in enumerate(self.sublayers):
-            ret += sublayer.save(path, f"{key}.no{i}_")
+            ret.update(sublayer.save(path, f"{key}.no{i}_"))
         return ret
 
-    def load(self, path: str, data=None, key: str | NoneType = None):
-        if key is None:
-            key = ""
+    def load(self, path: str, data=None, key: str = ""):
         if data is None:
             data = np.load(path)
         key += self.__class__.__name__

@@ -93,23 +93,25 @@ cpdef np.ndarray bwdmaxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, np.ndarray[DTY
     return ret
 
 
-cpdef np.ndarray conv2db(np.ndarray[DTYPE_t,ndim=3] fm,np.ndarray[DTYPE_t,ndim=3] krnl,int padding=0):
+cpdef np.ndarray conv2db(np.ndarray[DTYPE_t,ndim=3] fm,np.ndarray[DTYPE_t,ndim=3] krnl,int padx=0,int pady=-2147483648):
+    if pady==-2147483648:
+        pady=padx
     assert fm.shape[0]==krnl.shape[0]
-    cdef size_t output_rows=fm.shape[1]-krnl.shape[1]+2*padding+1
-    cdef size_t output_cols=fm.shape[2]-krnl.shape[2]+2*padding+1
+    cdef size_t output_rows=fm.shape[1]-krnl.shape[1]+2*padx+1
+    cdef size_t output_cols=fm.shape[2]-krnl.shape[2]+2*pady+1
     cdef size_t channels = fm.shape[0]
 
     cdef size_t krnli,krnlj,fmlefttopi,fmlefttopj,c,i,j
     cdef np.ndarray[DTYPE_t,ndim=3] ret = np.zeros((fm.shape[0],output_rows,output_cols),dtype=fm.dtype)
-    cdef np.ndarray[DTYPE_t,ndim=3] padfm
-    if padding>0:
-        padfm = np.zeros((fm.shape[0],fm.shape[1]+2*padding,fm.shape[2]+2*padding),dtype=fm.dtype)
-        padfm[:,:,padding:-padding,padding:-padding]=fm
-    elif padding < 0:
-        padfm=fm[:,:,padding:-padding,padding:-padding]
+    cdef maxx0=max(padx,0),maxy0=max(pady,0),minx0=min(padx,0),miny0=min(pady,0)
+    cdef np.ndarray[DTYPE_t,ndim=3] padfm=np.pad(fm,((0,0),(maxx0,maxx0),(maxy0,maxy0)),'constant')
+    padfm=padfm[:,-minx0:minx0+padfm.shape[1],-miny0:miny0+padfm.shape[2]]
+    if output_rows*output_cols<krnl.shape[1]*krnl.shape[2]:
+        for i in range(output_rows):
+            for j in range(output_cols):
+                ret[:,i,j]=np.sum(padfm[:,i:i+krnl.shape[1],j:j+krnl.shape[2]]*krnl,axis=(1,2)).reshape(channels,1,1)
     else:
-        padfm=fm
-    for krnli in range(krnl.shape[1]):
-        for krnlj in range(krnl.shape[2]):
-            ret+=padfm[:,krnli:krnli+output_rows,krnlj:krnlj+output_cols]*krnl[:,krnli,krnlj].reshape(channels,1,1)
+        for krnli in range(krnl.shape[1]):
+            for krnlj in range(krnl.shape[2]):
+                ret+=padfm[:,krnli:krnli+output_rows,krnlj:krnlj+output_cols]*krnl[:,krnli,krnlj].reshape(channels,1,1)
     return ret

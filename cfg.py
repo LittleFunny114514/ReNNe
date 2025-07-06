@@ -2,7 +2,7 @@ import numpy
 import scipy
 
 np = numpy  # We will write a numpy-like interface for a compute framework satisfied with OpenCL
-sp = scipy
+sci = scipy
 dtype = np.float32
 devide_epsilon = dtype(1e-8)
 

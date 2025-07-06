@@ -6,6 +6,7 @@ from typing import Literal
 from . import cfg
 
 np = cfg.np
+sci = cfg.sci
 
 
 def iterate(arr):
@@ -655,12 +656,7 @@ class Transpose(Operation):
 
     def forwardUnwrap(self):
         if self.axis is None:
-            tmp = (
-                self.inputs[0].output
-                if self.inputs[0].output.ndim == 1
-                else self.inputs[0].output
-            )
-            self.output = tmp.transpose()
+            self.output = self.inputs[0].output.transpose()
         else:
             self.output = self.inputs[0].output.transpose(self.axis)
 

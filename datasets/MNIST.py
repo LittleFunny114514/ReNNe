@@ -23,14 +23,14 @@ def read(pathimages, pathlabels):
     return images, labels
 
 
-def toOneHot(labels):
+def toOneHot(labels: np.ndarray):
     onehot = np.zeros((labels.shape[0], 10), dtype=cfg.dtype)
     for i in range(labels.shape[0]):
         onehot[i][labels[i]] = 1
     return onehot
 
 
-def normalize(images):
+def normalize(images: np.ndarray):
     return images.astype(cfg.dtype) / 255
 
 
@@ -41,7 +41,7 @@ def loadTrain():
     )
 
 
-def readTest():
+def loadTest():
     return read(
         "ReNNe/datasets/t10k-images.idx3-ubyte", "ReNNe/datasets/t10k-labels.idx1-ubyte"
     )

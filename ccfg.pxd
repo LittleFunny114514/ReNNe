@@ -5,6 +5,7 @@ from libcpp.vector cimport vector
 from libc.stdio cimport printf
 from libc.math cimport exp, log
 from libc.stddef cimport size_t
+from libc.stdint cimport int32_t, int64_t
 
 ctypedef fused DTYPE_t:
     np.float32_t
