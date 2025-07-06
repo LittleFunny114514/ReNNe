@@ -1,5 +1,6 @@
 import numpy
 import scipy
+import scipy.special,scipy.ndimage
 
 np = numpy  # We will write a numpy-like interface for a compute framework satisfied with OpenCL
 sci = scipy

@@ -11,5 +11,5 @@ cdef np.ndarray argmax3dc(np.ndarray[DTYPE_t, ndim=4] arr)
 cpdef np.ndarray maxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, int ksize, int stride=*)
 cpdef np.ndarray bwdmaxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, np.ndarray[DTYPE_t, ndim=3] grad_output, int ksize, int stride=*)
 cpdef np.ndarray conv2db(np.ndarray[DTYPE_t,ndim=3] fm,np.ndarray[DTYPE_t,ndim=3] krnl,int padx=*,int pady=*)
-
-cdef size_t MIN_FFTCONV = 1048576
+cpdef np.ndarray conv3db(np.ndarray[DTYPE_t,ndim=4] fm,np.ndarray[DTYPE_t,ndim=4] krnl,int padx=*,int pady=*,int padz=*)
+cpdef np.ndarray grilleIntepolation2db(np.ndarray[DTYPE_t,ndim=3] fm,int scale,bool mode=*)

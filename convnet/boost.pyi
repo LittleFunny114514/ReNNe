@@ -15,3 +15,16 @@ def bwdmaxpooling2db(
 def conv2db(
     fm: np.ndarray, krnl: np.ndarray, padx: int = 0, pady: int = -2147483648
 ) -> np.ndarray: ...
+def conv3db(
+    fm: np.ndarray,
+    krnl: np.ndarray,
+    padx: int = 0,
+    pady: int = -2147483648,
+    padz: int = -2147483648,
+) -> np.ndarray: ...
+def grilleInterpolation2db(fm: np.ndarray, size: int, mode: bool = True) -> np.ndarray:
+    """
+    if mode==True, then upsample the image by size times
+    if mode==False, then downsample the image by size times
+    """
+    ...

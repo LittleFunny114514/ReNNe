@@ -192,3 +192,15 @@ class Linear(Module):
             "activation": self.activation.__name__,
             "use_bias": self.bias is not None,
         }
+
+class Reshape(Module):
+    def init(self, *shape):
+        self.shape = shape
+
+    def forwardUnwrap(self, x: base.Operation) -> base.Operation:
+        return x.reshape(*self.shape)
+
+    def getIOShape(self):
+        return ((0,),), ((0,),)
+    def info(self) -> dict:
+        return {"shape": self.shape}
