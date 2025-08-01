@@ -31,46 +31,22 @@ class Ln(base.Operation):
         self.inputs[0].grad += self.grad / self.inputs[0]
 
 
-class Where(base.Operation):
-    def __init__(self, input, condition, true_value, false_value):
-        self.condition = condition
-        self.input = input
-        self.true_value = true_value
-        self.false_value = false_value
-        super().__init__(input, true_value, false_value)
-
-    def forwardUnwrap(self):
-        self.output = np.where(
-            self.condition(self.inputs[0].output), self.true_value, self.false_value
-        )
-
-    def backwardUnwrap(self):
-        self.true_value.grad += Where(self.condition, self.grad, 0)
-        self.false_value.grad += Where(self.condition, 0, self.grad)
-
-
-class Clip(base.Operation):
-    def __init__(self, input, min, max):
-        self.min = min
-        self.max = max
-        super().__init__(input)
-
-    def forwardUnwrap(self):
-        self.output = np.clip(self.inputs[0].output, self.min, self.max)
-
-    def backwardUnwrap(self):
-        self.inputs[0].grad += Where()
-
-
 def sigmoid(x: base.Operation):
     return 1 / (Exp(-x) + 1)
 
 
-def relu(x):
-    return Where(x, lambda x: x >= 0, x, 0)
+class ReLU(base.Operation):
+    def init(self, input):
+        pass
+
+    def forwardUnwrap(self):
+        self.output = np.maximum(self.inputs[0].output, 0)
+
+    def backwardUnwrap(self):
+        self.inputs[0].grad += self.grad * (self > 0)
 
 
-def swish(x):
+def swish(x: base.Operation) -> base.Operation:
     """
     x*sigmoid(x)
     """
@@ -86,32 +62,20 @@ class Tanh(base.Operation):
 
 
 class Softmax(base.Operation):
-    """
-    softmax each row
-    """
 
-    def init(self, input):
-        pass
+    def __init__(self, input, axis=(-1,)):
+        self.axis = axis
+        super().__init__(input)
 
     def forwardUnwrap(self):
-        assert self.inputs[0].output.ndim in [1, 2]
-        if self.inputs[0].output.ndim == 1:
-            exp = np.exp(self.inputs[0].output - np.max(self.inputs[0].output))
-            self.output = exp / np.sum(exp)
-        else:
-            exp = np.exp(
-                self.inputs[0].output
-                - np.max(self.inputs[0].output, axis=1, keepdims=True)
-            )
-            self.output = exp / np.sum(exp, axis=1, keepdims=True)
+        maxeach = np.max(self.inputs[0].output, axis=self.axis, keepdims=True)
+        self.output = np.exp(self.inputs[0].output - maxeach)
+        self.output /= np.sum(self.output, axis=self.axis, keepdims=True)
 
     def backwardUnwrap(self):
-        if self.inputs[0].output.ndim == 1:
-            self.inputs[0].grad += (self.grad - base.Matmul(self.grad, self)) * self
-        else:
-            self.inputs[0].grad += (
-                self.grad - base.JoinDim(Einsum("bi,bi->b", self.grad, self), (1,))
-            ) * self
+        self.inputs[0].grad += self * (
+            self.grad + -base.Sum(self.grad * self, axis=self.axis, keepdims=True)
+        )
 
 
 class DiscreateDerivative:
@@ -156,7 +120,9 @@ class Einsum(base.Operation):
                 ",".join(self.left[:i] + [self.right] + self.left[i + 1 :])
                 + f"->{self.left[i]}"
             )
-            self.inputs[i].grad += Einsum(eq, self.grad)
+            self.inputs[i].grad += Einsum(
+                eq, *(self.inputs[:i] + [self.grad] + self.inputs[i + 1 :])
+            )
 
 
 class Take(base.Operation):
@@ -185,7 +151,7 @@ class WeightDecay(base.Optimizer):
         self.suboptimizer = suboptimizer
 
     def setParameter(self, parameter):
-        self.suboptimizer.setParameter(parameter)
+        return self.suboptimizer.setParameter(parameter)
 
     def createLike(self):
         return WeightDecay(self.decay_rate, self.suboptimizer.createLike())
@@ -197,9 +163,6 @@ class WeightDecay(base.Optimizer):
     @lr.setter
     def lr(self, lr):
         self.suboptimizer.lr = lr
-
-    def setParameter(self, parameter):
-        return self.suboptimizer.setParameter(parameter)
 
     def __call__(self):
         self.suboptimizer.parameter.value *= 1 - self.suboptimizer.lr * self.decay_rate
@@ -235,7 +198,7 @@ class Adam(base.Optimizer):
             self.lr
             / (1 - self.expbeta1)
             * self.m
-            / (np.sqrt(self.v / (1 - self.expbeta2)) + cfg.devide_epsilon)
+            / (np.sqrt(self.v / (1 - self.expbeta2)) + cfg.divide_epsilon)
         )
 
 
@@ -258,3 +221,11 @@ class RMSProp(base.Optimizer):
     def update(self, grad: np.ndarray):
         self.v = self.beta * self.v + (1 - self.beta) * grad**2
         self.parameter.value += self.lr * grad / (np.sqrt(self.v) + cfg.divide_epsilon)
+
+
+def zeros(shape: tuple[int]):
+    return base.input(np.zeros(shape, dtype=cfg.dtype))
+
+
+def ones(shape: tuple[int]):
+    return base.input(np.ones(shape, dtype=cfg.dtype))

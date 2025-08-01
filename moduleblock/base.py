@@ -1,7 +1,6 @@
 from types import NoneType
-from typing import override
 from collections.abc import Iterable
-import gc
+from typing import Any, Callable, Dict, Protocol, Tuple
 
 from .. import base, cfg
 from ..misc import phase1 as misc
@@ -13,19 +12,15 @@ class Module:
     def __init__(self, *args, **kwargs):
         self.params: list[base.Data] = []
         self.sublayers: list[Module] = []
+        self.io_shape = ((-1,),), ((-1,),)
         self.init(*args, **kwargs)
-
-    def getIOShape(self):
-        """
-        return: ((input_shape1,output_shape1),...)
-        zero if the sidelen of this axis is arbitary.
-        """
-        raise NotImplementedError
 
     def init(self, *args, **kwargs):
         pass
 
-    def forwardUnwrap(self, *x: base.Operation) -> tuple[base.Operation]:
+    def forwardUnwrap(
+        self, *x: base.Operation
+    ) -> tuple[base.Operation] | base.Operation:
         raise NotImplementedError
 
     def forward(
@@ -33,10 +28,9 @@ class Module:
     ) -> tuple[base.Operation]:
         y = self.forwardUnwrap(*x)
         if isinstance(y, base.Operation):
-            return (y,)
+            y = (y,)
         assert isinstance(y, Iterable)
-        if not isinstance(y, tuple):
-            y = tuple(y)
+        y = tuple(y)
         if reserve_output:
             for yi in y:
                 yi.output_reserved = True
@@ -118,7 +112,7 @@ class Module:
             indent_str * (indent - 1)
             + (last_indent if indent > 0 else "")
             + f"{self.__class__.__name__}("
-            + repr(self.getIOShape())
+            + repr(self.io_shape)
             + ", ".join([""] + [f"{key}={value}" for key, value in self.info().items()])
             + ")\n"
         )
@@ -135,20 +129,31 @@ class Sequential(Module):
     def init(self, *modules: Module):
         self.sublayers = [*modules]
 
-    def forwardUnwrap(self, *x: base.Operation) -> base.Operation:
+    def forwardUnwrap(self, *x: base.Operation) -> tuple[base.Operation]:
         for sublayer in self.sublayers:
             x = sublayer.forward(*x)
         return x
 
-    def getIOShape(self):
-        ishape, _ = self.sublayers[0].getIOShape()
-        _, oshape = self.sublayers[-1].getIOShape()
+    @property
+    def io_shape(self):
+        ishape, _ = self.sublayers[0].io_shape
+        _, oshape = self.sublayers[-1].io_shape
         return ishape, oshape
+
+    @io_shape.setter
+    def io_shape(self, value: tuple[tuple, tuple]):
+        pass
 
 
 class ResidualSequential(Module):
-    def getIOShape(self):
-        return self.seq.getIOShape()
+
+    @property
+    def io_shape(self):
+        return self.seq.io_shape
+
+    @io_shape.setter
+    def io_shape(self, value: tuple[tuple, tuple]):
+        pass
 
     def init(self, *module: Module, postnorm: Module | NoneType = None):
         self.seq = Sequential(*module)
@@ -166,20 +171,32 @@ class ResidualSequential(Module):
 
 
 class Linear(Module):
+
     def init(
         self,
         in_features: int,
         out_features: int,
         enable_bias: bool = True,
-        activation=misc.Tanh,
+        activation: Callable[[base.Operation], base.Operation] = misc.Tanh,
     ):
         self.weight = base.parameter((in_features, out_features))
         self.bias = base.parameter((out_features,)) if enable_bias else None
         self.params = [self.weight, self.bias] if enable_bias else [self.weight]
         self.activation = activation if activation is not None else lambda x: x
-
-    def getIOShape(self):
-        return ((0, self.weight.value.shape[0]),), ((0, self.weight.value.shape[1]),)
+        self.io_shape = (
+            (
+                (
+                    -1,
+                    in_features,
+                ),
+            ),
+            (
+                (
+                    -1,
+                    out_features,
+                ),
+            ),
+        )
 
     def forwardUnwrap(self, x: base.Operation) -> base.Operation:
         y = self.activation(
@@ -193,14 +210,37 @@ class Linear(Module):
             "use_bias": self.bias is not None,
         }
 
+
 class Reshape(Module):
+    """
+    This class would be removed in next alpha version
+    """
+
     def init(self, *shape):
         self.shape = shape
+        self.io_shape = (((0,),), (shape,))
 
     def forwardUnwrap(self, x: base.Operation) -> base.Operation:
         return x.reshape(*self.shape)
 
-    def getIOShape(self):
-        return ((0,),), ((0,),)
     def info(self) -> dict:
         return {"shape": self.shape}
+
+
+class Lambda(Module):
+
+    def init(
+        self,
+        func: Callable,
+        io_shape: tuple[tuple, tuple] = ((-1,), (-1,)),
+        **kwargs,
+    ):
+        self.func = func
+        self.func_kwargs = kwargs
+        self.io_shape = (io_shape[0],), (io_shape[1],)
+
+    def forwardUnwrap(self, *x: base.Operation) -> tuple[base.Operation]:
+        return self.func(*x, **self.func_kwargs)
+
+    def info(self) -> dict:
+        return {"func": self.func.__name__}

@@ -1,3 +1,4 @@
+# cython: language_level=3
 from ..cfg import *
 from ..ccfg import *
 from ..ccfg cimport *
@@ -8,8 +9,7 @@ cdef np.ndarray argmax3dc(np.ndarray[DTYPE_t, ndim=4] arr)
 
 #b means batch in function declarations below.
 
-cpdef np.ndarray maxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, int ksize, int stride=*)
+cpdef np.ndarray pooling2db(np.ndarray[DTYPE_t, ndim=3] fm, int ksize, int stride=*, bool mode=*)
 cpdef np.ndarray bwdmaxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, np.ndarray[DTYPE_t, ndim=3] grad_output, int ksize, int stride=*)
 cpdef np.ndarray conv2db(np.ndarray[DTYPE_t,ndim=3] fm,np.ndarray[DTYPE_t,ndim=3] krnl,int padx=*,int pady=*)
 cpdef np.ndarray conv3db(np.ndarray[DTYPE_t,ndim=4] fm,np.ndarray[DTYPE_t,ndim=4] krnl,int padx=*,int pady=*,int padz=*)
-cpdef np.ndarray grilleIntepolation2db(np.ndarray[DTYPE_t,ndim=3] fm,int scale,bool mode=*)

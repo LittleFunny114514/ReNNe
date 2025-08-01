@@ -5,7 +5,7 @@ import scipy.special,scipy.ndimage
 np = numpy  # We will write a numpy-like interface for a compute framework satisfied with OpenCL
 sci = scipy
 dtype = np.float32
-devide_epsilon = dtype(1e-8)
+divide_epsilon = dtype(1e-8)
 
 IGNORE_PYTHON_VERSION_ISNT_SATISFIED = True
 INDENT_LEN = 4

@@ -58,30 +58,39 @@ def argmax2d(arr:np.ndarray):
 
 #b means batch in function declaration.
 
-cpdef np.ndarray maxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, int ksize, int stride=0):
+cpdef np.ndarray pooling2db(np.ndarray[DTYPE_t, ndim=3] fm, int ksize, int stride=0, bool mode=True):
     if stride == 0:
         stride = ksize
-    cdef size_t c,i,j,I=0,J=0
-    cdef np.ndarray[DTYPE_t,ndim=3] ret = np.zeros((fm.shape[0],fm.shape[1]//ksize,fm.shape[2]//ksize),dtype=fm.dtype)
-    for c in range(fm.shape[0]):
-        for i in range(0,fm.shape[1],stride):
-            for j in range(0,fm.shape[2],stride):
-                ret[c,I,J]=np.max(fm[c,i:i+ksize,j:j+ksize])
-                J+=1
-            I+=1
-            J=0
-        I=0
+    cdef size_t c,i,j,right,bottom,I=0,J=0
+    cdef np.ndarray[DTYPE_t,ndim=3] ret = np.zeros((fm.shape[0],<int>ceil(fm.shape[1]/float(stride)),<int>ceil(fm.shape[2]/float(ksize))),dtype=fm.dtype)
+    for i in range(0,fm.shape[1],stride):
+        for j in range(0,fm.shape[2],stride):
+            bottom=min(i+ksize,fm.shape[1])
+            right=min(j+ksize,fm.shape[2])
+            if mode:
+                ret[:,I,J]=np.max(fm[:,i:bottom,j:right],axis=(1,2))
+            else:
+                ret[:,I,J]=np.mean(fm[:,i:bottom,j:right],axis=(1,2))
+            J+=1
+        I+=1
+        J=0
     return ret
 
 cpdef np.ndarray bwdmaxpooling2db(np.ndarray[DTYPE_t, ndim=3] fm, np.ndarray[DTYPE_t, ndim=3] grad_output, int ksize, int stride=0):
     if stride == 0:
         stride = ksize
-    cdef size_t i,j,I=0,J=0
+    cdef size_t i,j,I=0,J=0,rows_repeat,cols_repeat
     cdef np.ndarray[DTYPE_t,ndim=3] ret = np.zeros((fm.shape[0],fm.shape[1],fm.shape[2]),dtype=fm.dtype)
+    cdef np.ndarray[bool,ndim=3] t1
     for i in range(0,fm.shape[1],stride):
         for j in range(0,fm.shape[2],stride):
-            ret[:,i:i+ksize,j:j+ksize] = (grad_output[:,I,J] == fm[:,i:i+ksize,j:j+ksize])*grad_output[c,I,J]
+            rows_repeat=min(ksize,fm.shape[1]-i)
+            cols_repeat=min(ksize,fm.shape[2]-j)
+            t1=np.max(fm[:,i:i+rows_repeat,j:j+cols_repeat],(1,2),keepdims=True)\
+                .repeat(rows_repeat,1).repeat(cols_repeat,2) == fm[:,i:i+rows_repeat,j:j+cols_repeat]
+            ret[:,i:i+rows_repeat,j:j+cols_repeat] = t1 * grad_output[:,I:I+1,J:J+1]
             J+=1
+        J=0
         I+=1
     return ret
 
@@ -92,21 +101,21 @@ cpdef np.ndarray conv2db(np.ndarray[DTYPE_t,ndim=3] fm,np.ndarray[DTYPE_t,ndim=3
     assert fm.shape[0]==krnl.shape[0]
     cdef size_t output_rows=fm.shape[1]-krnl.shape[1]+2*padx+1
     cdef size_t output_cols=fm.shape[2]-krnl.shape[2]+2*pady+1
-    cdef size_t channels = fm.shape[0]
+    cdef size_t channels = fm.shape[0],krnl_rows=krnl.shape[1],krnl_cols=krnl.shape[2]
 
     cdef size_t krnli,krnlj,fmlefttopi,fmlefttopj,c,i,j
     cdef np.ndarray[DTYPE_t,ndim=3] ret = np.zeros((fm.shape[0],output_rows,output_cols),dtype=fm.dtype)
-    cdef maxx0=max(padx,0),maxy0=max(pady,0),minx0=min(padx,0),miny0=min(pady,0)
+    cdef size_t maxx0=max(padx,0),maxy0=max(pady,0),minx0=min(padx,0),miny0=min(pady,0)
     cdef np.ndarray[DTYPE_t,ndim=3] padfm=np.pad(fm,((0,0),(maxx0,maxx0),(maxy0,maxy0)),'constant')
     padfm=padfm[:,-minx0:minx0+padfm.shape[1],-miny0:miny0+padfm.shape[2]]
     if output_rows*output_cols<krnl.shape[1]*krnl.shape[2]:
         for i in range(output_rows):
             for j in range(output_cols):
-                ret[:,i,j]=np.sum(padfm[:,i:i+krnl.shape[1],j:j+krnl.shape[2]]*krnl,axis=(1,2)).reshape(channels,1,1)
+                ret[:,i,j]=np.sum(padfm[:,i:i+krnl_rows,j:j+krnl_cols]*krnl,axis=(1,2))
     else:
         for krnli in range(krnl.shape[1]):
             for krnlj in range(krnl.shape[2]):
-                ret+=padfm[:,krnli:krnli+output_rows,krnlj:krnlj+output_cols]*krnl[:,krnli,krnlj].reshape(channels,1,1)
+                ret+=padfm[:,krnli:krnli+output_rows,krnlj:krnlj+output_cols]*krnl[:,krnli:krnli+1,krnlj:krnlj+1]
     return ret
 
 cpdef np.ndarray conv3db(np.ndarray[DTYPE_t,ndim=4] fm,np.ndarray[DTYPE_t,ndim=4] krnl,int padx=0,int pady=-2147483648,int padz=-2147483648):
@@ -122,7 +131,7 @@ cpdef np.ndarray conv3db(np.ndarray[DTYPE_t,ndim=4] fm,np.ndarray[DTYPE_t,ndim=4
 
     cdef size_t krnli,krnlj,krnlk,fmlefttopi,fmlefttopj,fmlefttopk,c,i,j,k
     cdef np.ndarray[DTYPE_t,ndim=4] ret = np.zeros((fm.shape[0],output_rows,output_cols,output_depth),dtype=fm.dtype)
-    cdef maxx0=max(padx,0),maxy0=max(pady,0),maxz0=max(padz,0),minx0=min(padx,0),miny0=min(pady,0),minz0=min(padz,0)
+    cdef size_t maxx0=max(padx,0),maxy0=max(pady,0),maxz0=max(padz,0),minx0=min(padx,0),miny0=min(pady,0),minz0=min(padz,0)
     cdef np.ndarray[DTYPE_t,ndim=4] padfm=np.pad(fm,((0,0),(maxx0,maxx0),(maxy0,maxy0),(maxz0,maxz0)),'constant')
     padfm=padfm[:,-minx0:minx0+padfm.shape[1],-miny0:miny0+padfm.shape[2],-minz0:minz0+padfm.shape[3]]
     if output_rows*output_cols*output_depth<krnl.shape[1]*krnl.shape[2]*krnl.shape[3]:
@@ -137,20 +146,3 @@ cpdef np.ndarray conv3db(np.ndarray[DTYPE_t,ndim=4] fm,np.ndarray[DTYPE_t,ndim=4
                     ret+=padfm[:,krnli:krnli+output_rows,krnlj:krnlj+output_cols,krnlk:krnlk+output_depth]*krnl[:,krnli,krnlj,krnlk].reshape(channels,1,1,1)
     return ret
 
-cpdef np.ndarray grilleIntepolation2db(np.ndarray[DTYPE_t,ndim=3] fm,int scale,bool mode=True):
-    if not mode:
-        assert fm.shape[1]%scale==0 and fm.shape[2]%scale==0
-    cdef size_t i,j
-    cdef np.ndarray[DTYPE_t,ndim=3] ret
-    if mode:
-        ret=np.zeros((fm.shape[0],fm.shape[1]*scale,fm.shape[2]*scale),dtype=fm.dtype)
-        for i in range(fm.shape[1]):
-            for j in range(fm.shape[2]):
-                ret[:,i*scale,j*scale]=fm[:,i,j]
-    else:
-        ret=np.zeros((fm.shape[0],fm.shape[1]//scale,fm.shape[2]//scale),dtype=fm.dtype)
-        for i in range(fm.shape[1]//scale):
-            for j in range(fm.shape[2]//scale):
-                ret[:,i,j]=fm[:,i*scale,j*scale]
-    return ret
-    

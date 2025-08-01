@@ -31,22 +31,26 @@ def getMalMulShape(shape0, shape1):
 
 
 class ParameterInitializer:
-    def __init__(self, type):
+
+    def __init__(self, type: Literal["normal", "uniform"]):
         assert type in ["normal", "uniform"]
         self.type = type
 
-    def __call__(self, value):
+    def __call__(self, value: np.ndarray, sqrdev=0, factor=1):
         assert isinstance(value, np.ndarray)
         sum = 0
         for num in value.shape:
             sum += num
 
         if self.type == "normal":
-            stddev = sqrt(6 / sum)
-            value[:] = np.random.normal(0, stddev, value.shape).astype(cfg.dtype)
+            stddev = sqrt(2 / sum) if sqrdev == 0 else sqrdev
+            value[:] = np.random.normal(0, stddev * factor, value.shape).astype(
+                cfg.dtype
+            )
         elif self.type == "uniform":
+            stddev = sqrt(6 / sum) if sqrdev == 0 else sqrdev
             value[:] = np.random.uniform(
-                -sqrt(2 / sum), sqrt(2 / sum), value.shape
+                -stddev * factor, stddev * factor, value.shape
             ).astype(cfg.dtype)
 
 
@@ -224,7 +228,7 @@ class Operation:
         )  # output value of this operation
         self.init(*input)
         self.grad: Operation | NoneType = (
-            None  # Operation().grad is also a Operation object from now on
+            None
         )
         # ↑gradients of outputs of this operation
         self.fwdvisited = False
@@ -253,8 +257,6 @@ class Operation:
             inp.forward()
         self.forwardUnwrap()
 
-        if not (cfg.NO_GRAD or isinstance(self.grad, Operation)):
-            self.grad = input(np.zeros_like(self.output))
         if cfg.IMMEDIATE_REMOVE_HIDDEN:
             for inp in self.inputs:
                 if (not inp.output_reserved) and np.array(
@@ -271,18 +273,19 @@ class Operation:
         assert not cfg.NO_GRAD
         if self.bwdvisited:
             return
-        if self.outputs_length is None:
 
-            def rec(obj: Operation):
-                if obj.outputs_length is None:
-                    obj.outputs_length = len(obj.outputs)
-                    for out in obj.outputs:
-                        rec(out)
-                    for inp in obj.inputs:
-                        rec(inp)
+        def rec(obj: Operation):
+            if obj.outputs_length is None:
+                obj.outputs_length = len(obj.outputs)
+                for out in obj.outputs:
+                    rec(out)
+                for inp in obj.inputs:
+                    rec(inp)
 
-            rec(self)
+        rec(self)
         # recursively create backward operations for all output operations
+        if not (cfg.NO_GRAD or isinstance(self.grad, Operation)):
+            self.grad = input(np.zeros_like(self.output))
         for i in range(self.outputs_length):
             self.outputs[i].backward()
 
@@ -329,19 +332,21 @@ class Operation:
     def clearOutputs(self, recursive=False):
         if self.outputs == []:
             return
-        if recursive:
-            for out in self.outputs:
-                out.clearOutputs(True)
+        self_outputs = self.outputs
         self.output = cfg.dtype(0)
         self.outputs = []
         self.outputs_length = None
+
+        if recursive:
+            for out in self_outputs:
+                out.clearOutputs(True)
         if recursive:
             for inp in self.inputs:
                 inp.clearOutputs(True)
 
     def update(self):
         assert not cfg.NO_GRAD
-        self.grad = input(0)
+        pass
 
     def __repr__(self):
         return f"{self.__class__.__name__}({', '.join(map(str,self.inputs))})"
@@ -368,7 +373,7 @@ class Operation:
         return Matmul(self, other)
 
     def reshape(self, shape):
-        if isinstance(shape, input):
+        if isinstance(shape, Operation):
             return ReshapeLike(self, shape)
         else:
             return Reshape(self, shape)
@@ -378,6 +383,18 @@ class Operation:
 
     def __neg__(self):
         return Mul2(self, input(cfg.dtype(-1)))
+
+    def __ge__(self, other):
+        return Compare(self, other, "ge")
+
+    def __gt__(self, other):
+        return Compare(self, other, "g")
+
+    def __le__(self, other):
+        return Compare(self, other, "le")
+
+    def __lt__(self, other):
+        return Compare(self, other, "l")
 
     def t(self, axis: tuple = None):
         return Transpose(self, axis)
@@ -549,7 +566,7 @@ class Add(Operator):
 
 
 class Sum(Operation):
-    def __init__(self, input, axis, keepdims=False):
+    def __init__(self, input, axis=None, keepdims=False):
         super().__init__(input)
         self.axis = axis
         self.keepdims = keepdims
@@ -592,14 +609,46 @@ class DivElementWise(Operator):
 
 
 class Matmul(Operation):
-    def init(self, a, b):
-        pass
-
+    def __init__(self, left, right, laxis=None, raxis=None,oaxis=None):
+        super().__init__(left, right)
+        self.laxis = laxis
+        self.raxis = raxis
+        self.oaxis=oaxis
+        self.left = left
+        self.right = right
+        if self.raxis is None:
+            self.raxis = self.laxis
+        if self.laxis is not None:
+            assert len(laxis) == len(raxis) == 2
+        if self.oaxis is None and self.laxis==self.raxis:
+            self.oaxis=self.laxis
     def forwardUnwrap(self):
         a1_shape = self.inputs[0].output.shape
         a2_shape = self.inputs[1].output.shape
         a1_ndim = len(a1_shape)
         a2_ndim = len(a2_shape)
+
+        if self.laxis is not None:
+            assert max(self.laxis) < a1_ndim
+            assert max(self.raxis) < a2_ndim
+            assert min(self.laxis) >= -a1_ndim
+            assert min(self.raxis) >= -a2_ndim
+            laxis = tuple(range(a1_ndim))
+            laxis[-2], laxis[self.laxis[0]] = laxis[self.laxis[0]], laxis[-2]
+            laxis[-1], laxis[self.laxis[1]] = laxis[self.laxis[1]], laxis[-1]
+            raxis = tuple(range(a2_ndim))
+            raxis[-2], raxis[self.raxis[0]] = raxis[self.raxis[0]], raxis[-2]
+            raxis[-1], raxis[self.raxis[1]] = raxis[self.raxis[1]], raxis[-1]
+            left = np.transpose(self.inputs[0].output, axes=laxis)
+            right = np.transpose(self.inputs[0].output, axes=raxis)
+            mul = np.matmul(left, right)
+            if self.oaxis is not None:
+                oaxis = tuple(range(max(a1_ndim,a2_ndim)))
+                oaxis[-2], oaxis[self.oaxis[0]] = oaxis[self.oaxis[0]], oaxis[-2]
+                oaxis[-1], oaxis[self.oaxis[1]] = oaxis[self.oaxis[1]], oaxis[-1]
+                mul=np.transpose(mul,axes=oaxis)
+            self.output=mul
+            return
 
         if a1_ndim == 0 or a2_ndim == 0:
             self.output = self.inputs[0].output * self.inputs[1].output
@@ -607,6 +656,8 @@ class Matmul(Operation):
             self.output = np.matmul(self.inputs[0].output, self.inputs[1].output)
         elif a1_ndim == a2_ndim == 1:
             self.output = np.outer(self.inputs[0].output, self.inputs[1].output)
+        else:
+            raise NotImplementedError
 
     def backwardUnwrap(self):
         self.inputs[0].grad += Matmul(self.grad, self.inputs[1].t())
@@ -634,7 +685,7 @@ class Reshape(Operation):
         self.output = self.inputs[0].output.reshape(self.shape)
 
     def backwardUnwrap(self):
-        self.inputs[0].grad += self.grad.reshape(self.inputs[0].output.shape)
+        self.inputs[0].grad += self.grad.reshape(self.inputs[0])
 
 
 class ReshapeLike(Operation):
@@ -646,7 +697,7 @@ class ReshapeLike(Operation):
         self.output = self.inputs[0].output.reshape(self.like.output.shape)
 
     def backwardUnwrap(self):
-        self.inputs[0].grad += self.grad.reshape(self.inputs[0].output.shape)
+        self.inputs[0].grad += self.grad.reshape(self.inputs[0])
 
 
 class Transpose(Operation):
@@ -688,3 +739,32 @@ class JoinDim(Operation):
 
     def backwardUnwrap(self):
         self.inputs[0].grad += Sum(self.grad, self.dims)
+
+
+class Compare(Operator):
+    def __init__(
+        self, left, right, mode: Literal["l", "g", "le", "ge", "e", "ne"] = "g"
+    ):
+        assert mode in ["l", "g", "le", "ge", "e", "ne"]
+        self.mode = mode
+        self.left = left if isinstance(left, Operation) else input(left)
+        self.right = right if isinstance(right, Operation) else input(right)
+
+        super().__init__(left, right)
+
+    def forwardUnwrap(self):
+        if self.mode == "l":
+            self.output = self.left.output < self.right.output
+        elif self.mode == "g":
+            self.output = self.left.output > self.right.output
+        elif self.mode == "le":
+            self.output = self.left.output <= self.right.output
+        elif self.mode == "ge":
+            self.output = self.left.output >= self.right.output
+        elif self.mode == "e":
+            self.output = self.left.output == self.right.output
+        elif self.mode == "ne":
+            self.output = self.left.output != self.right.output
+
+    def backwardUnwrap(self):
+        pass

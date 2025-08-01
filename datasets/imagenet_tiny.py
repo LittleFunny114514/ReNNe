@@ -4,5 +4,7 @@ It will read the subset of imagenet and save it to a numpy array.
 The numpy array will be used to train some models for ILSVRC.
 """
 
-import numpy as np
 import h5py
+from .. import cfg
+
+np = cfg.np

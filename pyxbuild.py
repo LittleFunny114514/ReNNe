@@ -12,9 +12,9 @@ linker_args = []
 PYX_registered_modules = [
     {"name": "ReNNe.ccfg", "sources": [RENNE_ROOT_PATH + "/ccfg.pyx"]},
     {
-        "name": "ReNNe.convnet.boost",
+        "name": "ReNNe.conv.boost",
         "sources": [
-            RENNE_ROOT_PATH + "/convnet/boost.pyx",
+            RENNE_ROOT_PATH + "/conv/boost.pyx",
         ],
     },
 ]
@@ -44,8 +44,7 @@ def install():
         )
         for pack in PYX_registered_modules
     ]
-    for ext in extensions:
-        setup(name=ext.name, ext_modules=cythonize([ext], annotate=True))
+    setup(ext_modules=cythonize(extensions, annotate=True))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 from . import chklibs as _
 from . import cfg
 
+__version__=['alpha',2,2,1,'beta']
+
 _.chkmain()
 from . import pyxbuild
 
@@ -8,7 +10,7 @@ if cfg.PYX_BOOST and cfg.BUILD_PYX:
     pyxbuild.install()
 from .base import *
 from .misc import *
-from . import convnet, moduleblock, learning
+from . import conv, moduleblock, learning
 
 
 import sys

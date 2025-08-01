@@ -45,5 +45,5 @@ class CrossEntropy(Loss):
         return -np.sum(np.where(y_dst == 1, np.log(y), 0))
 
     def deriv_lossAnArray(self, y, y_dst):
-        y_clip = np.clip(y, cfg.devide_epsilon, 1 - cfg.devide_epsilon)
+        y_clip = np.clip(y, cfg.divide_epsilon, 1 - cfg.divide_epsilon)
         return np.where(y_dst == 1, 1 / y_clip, 0)
