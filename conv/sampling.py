@@ -22,9 +22,7 @@ class Pooling2D(base.Operation):
     def forwardUnwrap(self):
 
         if self.mode in ["max", "avg"]:
-            self.output = boost.pooling2db(
-                self.input.output, self.size,0, self.mode == "max"
-            )
+            self.output = boost.pooling2db(self.input.output, self.size, 0, self.mode)
         else:
             self.output = self.mode(self.input.output, self.size)
 

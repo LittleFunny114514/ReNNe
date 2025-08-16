@@ -68,7 +68,7 @@ class Module:
     def clearOperationCorrelates(self):
         for param in self.params:
             param.grad = None
-            param.fwdvisited = False
+            param.fwdstate = False
             param.bwdvisited = False
             param.clearOutputs(True)
         for sublayer in self.sublayers:

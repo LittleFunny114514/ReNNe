@@ -1,7 +1,8 @@
 import importlib
 import sys
 from sysconfig import get_python_version
-from ReNNe.cfg import *
+
+IGNORE_PYTHON_VERSION_ISNT_SATISFIED = True
 
 
 def checkLib(libname: str):
@@ -23,7 +24,7 @@ def checkPyVer():
             ver[0] == 3 and 9 <= ver[1] <= 12
         ), """
 Library ReNNe has better running on python 3.9 ~ python 3.12.
-You can set ReNNNe.cfg.IGNORE_PYTHON_VERSION_ISNT_SATISFIED = False to disable this verification
+You can set IGNORE_PYTHON_VERSION_ISNT_SATISFIED = False to disable this verification
     """
 
 
@@ -35,7 +36,4 @@ def chkmain():
     checkLib("numpy")
     checkLib("matplotlib")
     checkLib("scipy")
-
-    if PYX_BOOST:
-        checkLib("cython")
-        checkLib("setuptools")
+    checkLib("numba")

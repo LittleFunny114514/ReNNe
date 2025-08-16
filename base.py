@@ -1,18 +1,16 @@
+from collections import deque
 from math import sqrt
+from queue import Queue
 from types import NoneType
 
 import inspect
-from typing import Literal
+import asyncio
+from typing import Iterable, Literal
 from . import cfg
 
 np = cfg.np
 sci = cfg.sci
-
-
-def iterate(arr):
-    if isinstance(arr, np.ndarray):
-        return zip(np.ndindex(arr.shape), arr.flatten())
-    return zip(range(len(arr)), arr)
+mp = cfg.mp
 
 
 def getMalMulShape(shape0, shape1):
@@ -86,32 +84,6 @@ class Optimizer:
         self.update(grad)
 
 
-def search(boolvisited: str, type="pre", to="input"):
-    assert type in ["pre", "post"]
-    assert to in ["input", "output", "both"]
-
-    def decorator(func):
-        def wrapper(self, *args, **kwargs):
-            if eval(f"self.{boolvisited}"):
-                return
-            if type == "pre":
-                func(self, *args, **kwargs)
-                eval(f"self.{boolvisited}=True")
-            if to in ["input", "both"]:
-                for inp in self.inputs:
-                    eval(f"inp.{func.__name__}(self,*args,**kwargs)")
-            if to in ["output", "both"]:
-                for out in self.outputs:
-                    eval(f"out.{func.__name__}(self,*args,**kwargs)")
-            if type == "post":
-                func(self, *args, **kwargs)
-                eval(f"self.{boolvisited}=True")
-
-        return wrapper
-
-    return decorator
-
-
 def JsonFormat(obj, indent=0) -> str:
     # Teanslate a list or a dict to a multiline and indented json string
     indent_str = " " * cfg.INDENT_LEN * indent
@@ -160,21 +132,57 @@ class OperatingError(Exception):
         return super().__str__()
 
 
-def NodeRecursive(func):
-    def wrapper(self, *args, **kwargs):
-        try:
-            return func(self, *args, **kwargs)
-        except Exception as e:
-            raise OperatingError(
-                f"Error during operation {self.__class__.__name__}.{func.__name__}",
-                self.dbginfo,
-                e,
-            ) from e
+def NodeRecursion(state_name: str = ""):
+    def decorator(func):
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as e:
+                self.__dict__[state_name] = False
+                raise OperatingError(
+                    f"Error during operation {self.__class__.__name__}.{func.__name__}",
+                    self.dbginfo,
+                    e,
+                ) from e
 
-    if cfg.CREATE_DBGINFO:
-        return wrapper
-    else:
-        return func
+        async def async_wrapper(self, *args, **kwargs):
+            try:
+                return await func(self, *args, **kwargs)
+            except Exception as e:
+                self.__dict__[state_name] = False
+                raise OperatingError(
+                    f"Error during operation {self.__class__.__name__}.{func.__name__}",
+                    self.dbginfo,
+                    e,
+                ) from e
+
+        if cfg.CREATE_DBGINFO:
+            return async_wrapper if asyncio.iscoroutinefunction(func) else wrapper
+        else:
+            return func
+
+    return decorator
+
+
+class AsyncIteratable:
+    itab: Iterable
+
+    def __init__(self, itab: Iterable):
+        self.itab = itab
+
+    def __getitem__(self, idx):
+        return self.itab[idx]
+
+    def __aiter__(self):
+        self.__idx = 0
+        return self
+
+    async def __anext__(self):
+        if self.__idx >= len(self.itab):
+            raise StopAsyncIteration
+        value = self.itab[self.__idx]
+        self.__idx += 1
+        return value
 
 
 class Operation:
@@ -201,7 +209,7 @@ class Operation:
     __str__(): Returns a string representation\n\n
 
     Supported Operators:\n
-    +, -, *, /, @ (matrix multiplication), -, .T (transpose), .reshape() (shape transforms)
+    +, -, *, /, @ (matrix multiplication), -, .t() (transpose), .reshape() (shape transforms)
     """
 
     def __init__(self, *input):
@@ -227,14 +235,13 @@ class Operation:
             0
         )  # output value of this operation
         self.init(*input)
-        self.grad: Operation | NoneType = (
-            None
-        )
+        self.grad: Operation | NoneType = None
         # ↑gradients of outputs of this operation
-        self.fwdvisited = False
-        self.bwdvisited = False
-        self.outputs_length = None
-        self.output_reserved = False
+        self.fwdstate: bool = False  # DFS visited
+        self.bwdvisited: bool = False
+        self.deg = None
+        self.outputs_length: NoneType | int = None
+        self.output_reserved: bool = False
 
     def init(self, *input):
         pass
@@ -247,27 +254,72 @@ class Operation:
         # compute the derivative of this operation w.r.t. it's inputs
         raise NotImplementedError
 
-    @NodeRecursive
-    def forward(self):
+    @NodeRecursion("fwdstate")
+    def forwardRecursively(self):
         # compute the output value based on input values
-        if self.fwdvisited:
+        if self.fwdstate == True:
             return
         # recursively compute the output value of all input operations
+
         for inp in self.inputs:
-            inp.forward()
+            inp.forwardRecursively()
         self.forwardUnwrap()
 
         if cfg.IMMEDIATE_REMOVE_HIDDEN:
             for inp in self.inputs:
                 if (not inp.output_reserved) and np.array(
-                    [oi.fwdvisited for oi in inp.outputs]
+                    [oi.fwdstate for oi in inp.outputs]
                 ).all():
                     inp.output = cfg.dtype()
-                    inp.fwdvisited = False
+                    inp.fwdstate = False
 
-        self.fwdvisited = True
+        self.fwdstate = True
 
-    @NodeRecursive
+    def forwardByTopsort(self):
+        sorting: Queue[Operation] = Queue()
+
+        def calc_deg(obj: Operation):
+            if obj.deg is not None or obj.fwdstate:
+                return
+            for inp in obj.inputs:
+                calc_deg(inp)
+            obj.deg = [
+                sum(1 for inp in obj.inputs if not inp.fwdstate),
+                len(obj.outputs),
+            ]
+
+            if obj.deg[0] == 0 and not obj.fwdstate:
+                sorting.put_nowait(obj)
+
+        self.output_reserved = True
+        calc_deg(self)
+        while not sorting.empty():
+            node: Operation = sorting.get_nowait()
+            if not node.fwdstate:
+                node.forwardUnwrap()
+                node.fwdstate = True
+            for inp in node.inputs:
+                inp.deg[1] -= 1
+                if inp.deg[1] == 0:
+                    if cfg.IMMEDIATE_REMOVE_HIDDEN and not inp.output_reserved:
+                        inp.output = cfg.dtype(0)
+                        inp.fwdstate = False
+                    inp.deg = None
+            for out in node.outputs:
+                if out.deg is not None:
+                    out.deg[0] -= 1
+                    if out.deg[0] == 0:
+                        sorting.put_nowait(out)
+            if node.deg[1] == 0:
+                if cfg.IMMEDIATE_REMOVE_HIDDEN and not node.output_reserved:
+                    node.output = cfg.dtype(0)
+                    node.fwdstate = False
+                node.deg = None
+
+    def forward(self):
+        self.forwardByTopsort()
+
+    @NodeRecursion("bwdvisited")
     def backward(self):
         # compute the derivative of this operation w.r.t. it's inputs
         assert not cfg.NO_GRAD
@@ -305,16 +357,17 @@ class Operation:
         self.backwardUnwrap()
         self.bwdvisited = True
 
-    @NodeRecursive
+    @NodeRecursion()
     def reset(
         self, type: Literal["both", "fwd", "bwd"] = "both", zerooutput: bool = False
     ):
         assert type in ["both", "fwd", "bwd"]
         fwdv = False
         bwdv = False
-        if self.fwdvisited and type in ["fwd", "both"]:
+        if (self.fwdstate or self.deg is not None) and type in ["fwd", "both"]:
             fwdv = True
-            self.fwdvisited = False
+            self.fwdstate = False
+            self.deg = None
             if zerooutput:
                 self.output = cfg.dtype(0)
         if self.bwdvisited and type in ["bwd", "both"]:
@@ -330,6 +383,18 @@ class Operation:
                 oup.reset(type)
 
     def clearOutputs(self, recursive=False):
+        stack = deque([self])
+        cleared = set()
+        while len(stack):
+            node: Operation = stack.pop()
+            cleared.add(node)
+            node.output = cfg.dtype(0)
+            for nod in node.inputs + node.outputs:
+                if len(nod.outputs) and nod not in cleared:
+                    stack.append(nod)
+            node.outputs = []
+            node.outputs_length = None
+        """
         if self.outputs == []:
             return
         self_outputs = self.outputs
@@ -343,6 +408,7 @@ class Operation:
         if recursive:
             for inp in self.inputs:
                 inp.clearOutputs(True)
+        """
 
     def update(self):
         assert not cfg.NO_GRAD
@@ -450,31 +516,12 @@ class Net:
 
 class Data(Operation):
     def __init__(self, value: np.ndarray, trainable: bool = False):
-        if cfg.CREATE_DBGINFO:
-            self.dbginfo = OperationDbgInfo()
-            self.dbginfo.callstackoncreate = [
-                {
-                    "filepath": frame.filename,
-                    "lineno": frame.lineno,
-                    "function": frame.function,
-                    "code_context": frame.code_context,
-                }
-                for frame in inspect.stack()
-                if "ReNNe" in frame.filename
-            ]
+        super().__init__()
         self.trainable = trainable
         self.value: np.ndarray = cfg.dtype(value)
-        self.output: np.ndarray = self.value
-        self.grad: Operation | NoneType = None
-        self.inputs: list[Operation] = []
-        self.outputs: list[Operation] = []
         if self.trainable:
             self.optimizer: Optimizer = Optimizer(0.001)
             self.optimizer.setParameter(self)
-        self.fwdvisited = False
-        self.bwdvisited = False
-        self.outputs_length = None
-        self.output_reserved = True
 
     def setOptimizer(self, optimizer: Optimizer):
         assert self.trainable
@@ -532,13 +579,27 @@ class Add(Operator):
         if self.boardcastwith is None:
             self.boardcastwith = self.inputs[0]
         self.output = np.zeros_like(self.boardcastwith.output)
-        dimhide = {i for i, l in iterate(self.boardcastwith.output.shape) if l == 1}
+        dimhide = {i for i, l in enumerate(self.boardcastwith.output.shape) if l == 1}
         for inp in self.inputs:
             dimdiff = self.boardcastwith.output.ndim - inp.output.ndim
+            if inp.output.shape == self.output.shape or (
+                dimdiff >= 0
+                and (
+                    np.array(
+                        [
+                            self.output.shape[dimdiff + i] - inp.output.shape[i]
+                            for i in range(inp.output.ndim)
+                        ]
+                    )
+                    >= 0
+                ).all()
+            ):
+                self.output += inp.output
+                continue
             if dimdiff < 0:
                 squeezed = np.sum(inp.output, axis=tuple(range(-dimdiff)))
             else:
-                squeezed = np.copy(inp.output)
+                squeezed = inp.output
             # dimhide is the dims that should be summed int
             squeezed = np.sum(
                 squeezed,
@@ -596,9 +657,10 @@ class Mul2(Operator):
 
 class DivElementWise(Operator):
     def init(self, a, b):
-        assert a.output.shape == b.output.shape
+        pass
 
     def forwardUnwrap(self):
+        assert self.inputs[0].output.shape == self.inputs[1].output.shape
         self.output = self.inputs[0].output / self.inputs[1].output
 
     def backwardUnwrap(self):
@@ -609,19 +671,21 @@ class DivElementWise(Operator):
 
 
 class Matmul(Operation):
-    def __init__(self, left, right, laxis=None, raxis=None,oaxis=None):
+
+    def __init__(self, left, right, laxis=None, raxis=None, oaxis=None):
         super().__init__(left, right)
         self.laxis = laxis
         self.raxis = raxis
-        self.oaxis=oaxis
+        self.oaxis = oaxis
         self.left = left
         self.right = right
         if self.raxis is None:
             self.raxis = self.laxis
         if self.laxis is not None:
             assert len(laxis) == len(raxis) == 2
-        if self.oaxis is None and self.laxis==self.raxis:
-            self.oaxis=self.laxis
+        if self.oaxis is None and self.laxis == self.raxis:
+            self.oaxis = self.laxis
+
     def forwardUnwrap(self):
         a1_shape = self.inputs[0].output.shape
         a2_shape = self.inputs[1].output.shape
@@ -643,11 +707,11 @@ class Matmul(Operation):
             right = np.transpose(self.inputs[0].output, axes=raxis)
             mul = np.matmul(left, right)
             if self.oaxis is not None:
-                oaxis = tuple(range(max(a1_ndim,a2_ndim)))
+                oaxis = tuple(range(max(a1_ndim, a2_ndim)))
                 oaxis[-2], oaxis[self.oaxis[0]] = oaxis[self.oaxis[0]], oaxis[-2]
                 oaxis[-1], oaxis[self.oaxis[1]] = oaxis[self.oaxis[1]], oaxis[-1]
-                mul=np.transpose(mul,axes=oaxis)
-            self.output=mul
+                mul = np.transpose(mul, axes=oaxis)
+            self.output = mul
             return
 
         if a1_ndim == 0 or a2_ndim == 0:

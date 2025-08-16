@@ -32,12 +32,13 @@ class Learner:
         assert not cfg.NO_GRAD
         loss = base.Add(*[self.loss_func(yi, yi_dst) for yi, yi_dst in zip(y, y_dst)])
         loss.grad = self.de_a
-        loss.forward()
         self.model.backward()
+        loss.forward()
+        lossf = loss.output
         self.model.calcGradients()
 
         self.model.update()
-        return loss.output
+        return lossf
 
     def train(self, *args, **kwarge):
         raise NotImplementedError
@@ -85,9 +86,9 @@ class Supervised(Learner):
         modelIshape, modelOshape = self.model.io_shape
         modelIcnt = len(self.model.io_shape[0])
         modelOcnt = len(self.model.io_shape[1])
-        loss = 0.0
-        last_timestamp = 0
-        for timestamp in range(total_batch):
+        loss = 0
+        last_echo = -1
+        for _ in range(total_batch):
             self.model.clearOperationCorrelates()
             if self.model_batch_process:
                 idx = random.sample(range(dataset_x[0].shape[0]), batch_size)
@@ -107,12 +108,10 @@ class Supervised(Learner):
                 ]
                 y = self.model.forward(*x)
                 loss += self.descent(y, ydst)
-                if timestamp % 100 == 0 or timestamp < 50:
-                    print(
-                        f"Batch {last_timestamp}~{timestamp} avg loss {loss/(timestamp-last_timestamp)}"
-                    )
-                    last_timestamp = timestamp
-                    loss = 0.0
+                if _ % 100 == 0 or _ < 50:
+                    print(f"Batch {last_echo}~{_} Loss {loss/(_-last_echo)}")
+                    loss = 0
+                    last_echo = _
             else:
                 idx = random.sample(range(dataset_x[0].shape[0]), batch_size)
                 x = [None] * batch_size
@@ -132,9 +131,7 @@ class Supervised(Learner):
                         y_flat[i * modelOcnt + j] = y[i][j]
                         y_dst_flat[i * modelOcnt + j] = y_dst[i][j]
                 loss += self.descent(y_flat, y_dst_flat)
-                if timestamp % 100 == 0 or timestamp < 50:
-                    print(
-                        f"Batch {last_timestamp}~{timestamp} avg loss {loss/(timestamp-last_timestamp)}"
-                    )
-                    last_timestamp = timestamp
-                    loss = 0.0
+                if _ % 100 == 0 or _ < 50:
+                    print(f"Batch {last_echo}~{_} Loss {loss/(_-last_echo)}")
+                    loss = 0
+                    last_echo = _

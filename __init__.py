@@ -1,13 +1,17 @@
 from . import chklibs as _
-from . import cfg
 
-__version__=['alpha',2,2,1,'beta']
+__version__=['alpha',2,2,1,'beta',3]
 
 _.chkmain()
+'''
+# deprecated, now we're using numba.
 from . import pyxbuild
 
 if cfg.PYX_BOOST and cfg.BUILD_PYX:
     pyxbuild.install()
+'''
+
+from . import cfg
 from .base import *
 from .misc import *
 from . import conv, moduleblock, learning
